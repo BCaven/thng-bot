@@ -1,24 +1,14 @@
 /*
-THNG Droid Building
-
-template by: Prof. McLaughlin
-
-further modified by: Blake Caven
-
-
-DONE: Autonomous driving
-DONE: Manual driving
-DONE: timing code to go easy on the CPU
-DONE: modes
-TODO: Sound
-TODO: Graphics
-TODO: "Ambient" routines
-
+TODO when you get back to this
+update functions to have "sleep" periods after running
+make screen not clear unless necessary
 
 */
-// ---------------------------------------------------------------------------------------
-//                          Libraries
-// ---------------------------------------------------------------------------------------
+
+
+//************************************************
+// ND Jukebox
+//************************************************
 #include <PS3BT.h>
 #include <usbhub.h>
 #include <Sabertooth.h>
@@ -30,21 +20,6 @@ TODO: "Ambient" routines
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
 
-// ---------------------------------------------------------------------------------------
-//                 Servo setup
-// ---------------------------------------------------------------------------------------
-
-Servo myServo;
-int servo_angle = 10; // where the servo is supposed to be
-int servo_max_angle = 170;
-int servo_min_angle = 10;
-
-// --------------------------------------------------------------------------------------
-//                Sabertooth setup
-// --------------------------------------------------------------------------------------
-int driveDeadBandRange = 10;
-#define SABERTOOTH_ADDR 128
-Sabertooth *ST = new Sabertooth(SABERTOOTH_ADDR, Serial1);
 
 // ---------------------------------------------------------------------------------------
 //                 Setup for USB, Bluetooth Dongle, & PS3 Controller
@@ -127,67 +102,95 @@ boolean reqPS = false;
 long blinkMillis = millis();
 boolean blinkOn = false;
 
-// ---------------------------------------------------------------------------------------
-//    Used for drive chain
-// ---------------------------------------------------------------------------------------
-int currentSpeed = 0;
-int currentTurn = 0;
-#define MAX_SPEED 70
-boolean droidMoving = false;
+//************************************************
+// Juke Box Variables
+//************************************************
+// State Variables
+//************************************************
+bool requestSongStart = false;
+bool requestSongStop = false;
+bool requestScrollUp = false;
+bool requestScrollDown = false;
+bool requestVolUp = false;
+bool requestVolDown = false;
 
-// --------------------------------------------------------------------------------------
-//  Color Sensor
-// --------------------------------------------------------------------------------------
+int currentSelectedSongNumber = 1;
+int currentSelectedSongLength = 166;
+String currentSelectedSongTitle = "Walk the Line";
+long currentSelectedSongMillisStart = millis();
+float currentSelectedSongPercentComplete = 0;
+bool currentSelectedSongAtEnd = false;
+bool currentSelectedSongPlaying = false;
 
-#define s0 30
-#define s1 28
-#define s2 26
-#define s3 24
-#define LED 34
-#define out 22
+int currentVolumeNumber = 50;  // from 0 HIGH to 100 LOW
+float currentVolumePercentage = .5;
 
-long rValue = 0;
-long bValue = 0;
-long gValue = 0;
-long data = 0;
-int currentColor = 0; // 0=unknown 1=red 2=green 3=blue
-int currentRead = 1; // 1=red 2=green = 3=blue
+bool onMainMenu = true;
+bool initMainScreenComplete = false;
+bool onSongDetailScreen = false;
+bool initSongDetailComplete = false;
+bool onVolDetailScreen = false;
+bool initVolumeScreenComplete = false;
+int currentTopScrollSongNumber = 1;
 
-// ---------------------------------------------------------------------------------------
-//  Autonomous
-// ---------------------------------------------------------------------------------------
-// this boolean should be unnecessary if the program is written using modes instead
-// TODO: confirm and remove all mentions
-boolean autonomous = false;
-int mode = 0;
-#define COLOR_RANGE 30
-int action = 1; // 1 = forward 2 = right 3 = left
-#define AUTO_SPEED 40
+long scrollScreenDelayMillis = millis();
+int scrollScreenDelayInterval = 500;
+long refreshPercentCompleteMillis = millis();
+int refreshPercentCompleteInterval = 500;
+long refreshPercentVolumeMillis = millis();
+int refreshPercentVolumeInterval = 500;
 
-// --------------------------------------------------------------------------------------
-// SOUND
-// --------------------------------------------------------------------------------------
+String songTitle[36] = {"Walk the Line",
+                    "Ring of Fire",
+                    "Blue Suede Shoes",
+                    "So Lonesome",
+                    "Folsom Prison",
+                    "Cheatin Heart",
+                    "Jolene",
+                    "Big River",
+                    "Blues Eyes Cryin",
+                    "Imagine",
+                    "Long Tall Sally",
+                    "Pretty Woman",
+                    "Peggy Sue",
+                    "Everyday",
+                    "La Bamba",
+                    "Sweet Dreams",
+                    "Desperado",
+                    "The Twist",
+                    "Respect",
+                    "People Get Ready",
+                    "Dock of the Bay",
+                    "Dancing Streets",
+                    "My Imagination",
+                    "Stay Together",
+                    "Papa New Bag",
+                    "Stany By Me",
+                    "Who Do You Love",
+                    "My Generation",
+                    "Yesterday",
+                    "Mr Tambourine",
+                    "Fighting Man",
+                    "Paranoid",
+                    "Highway to Hell",
+                    "Roxanne",
+                    "Lola",
+                    "Love Rock N Roll"};
+                    
+int songTrack[36]={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36};
+
+long songLength[36]={166,157,136,169,165,163,162,168,140,184,129,180,150,128,124,211,121,156,148,159,162,158,181,198,128,178,150,199,127,150,139,173,208,195,250,175};
+
+// 
+
+
+// mp3 player
 MP3Trigger mp3trigger;
+#define MAX_VOLUME 110
+#define MIN_VOLUME 1
+int speaker_volume = 110;
 
-// length of audio tracks
-// TODO: patch library to ask controller if sound is playing
-#define AUDIO_LENGTH 1000
-#define CELEBRATION 1
-#define BLUE_TO_GREEN 2
-#define BLUE_TO_RED 3
-#define BACK_TO_BLUE 4
-// time at which last sound was triggered
-long last_played = 0;
-bool playing = false;
-// effective range 1-110
-// higher number is quieter
-#define MAX_SPEAKER_VOLUME 1
-#define MIN_SPEAKER_VOLUME 110
-int speaker_volume = 120;
-
-// --------------------------------------------------------------------------------------
-// VIDEO
-// --------------------------------------------------------------------------------------
+// tft board
 #define MISO 50
 #define MOSI 51
 #define SCK 52
@@ -197,29 +200,51 @@ int speaker_volume = 120;
 #define CARD_CS 6
 Adafruit_ST7735 tft = Adafruit_ST7735(TCS, TDC, RST);
 
+/*
+PLAN:
 
-// --------------------------------------------------------------------------------------
-// MODES (audio, video, control)
-// --------------------------------------------------------------------------------------
-// define how often each mode refreshes
-#define AUDIO_MODE_REFRESH 300
-#define VIDEO_MODE_REFRESH 250
-#define CONTROL_MODE_REFRESH 20
+pages:
+song select
+    list of the songs (at least five on screen)
+volume
+    current volume
+    NOTE: only shows up when adjusting volume
+current song info
+    when a song is playing:
+    name
+    % complete
 
-int audio_mode = 0; // 0 = quiet, 1 = ambient
-int video_mode = 0; // TODO: define these
-int control_mode = 0; // 0 = standby, 1 = manual, 2 = autonomous
+buttons:
+start
+stop
+change song (joystick)
+change volume (joystick)
 
+So,
+do not need modes for buttons
 
-// =======================================================================================
-//                                 Main Program
-// =======================================================================================
-// =======================================================================================
-//                                Setup Function
-// =======================================================================================
-void setup()
-{
-  
+do need modes for pages
+
+modes:
+    song select
+    volume
+    current song info
+
+*/
+// 0 = main page
+// 1 = current song
+// 2 = volume popup
+int page_mode = 0;
+int old_mode = 0;
+// how long to hold volume popup
+long vol_timeout = 1000;
+// when the volume button was last triggered
+long vol_triggered = 0;
+#define DISPLAY_REFRESH 300
+#define VOLUME_REFRESH 250
+#define TRACK_REFRESH 250
+
+void setup() {
     //Initialize Serial @ 115200 baud rate for Serial Monitor Debugging
     Serial.begin(115200);
     while (!Serial);
@@ -240,157 +265,94 @@ void setup()
     pinMode(13, OUTPUT);
     digitalWrite(13, LOW);
 
-   // ----------------------------------------------
-   // YOUR SETUP CONTROL CODE SHOULD START HERE
-   // ----------------------------------------------
 
-   // Servo PWM setup
-   // TODO: make these useful
-   myServo.attach(9);
+    // sound
+    mp3trigger.setup(&Serial2);
+    Serial2.begin(MP3Trigger::serialRate());
+    mp3trigger.setVolume(speaker_volume);
 
-   // ---------------------------------------------
-   // Drive chain setup
-   // ---------------------------------------------
-   Serial1.begin(9600);
-   ST->autobaud();
-   ST->setTimeout(200);
-   ST->setDeadband(driveDeadBandRange);
-   
-   // ---------------------------------------------
-   // color sensor
-   // ---------------------------------------------
-   pinMode(s0, OUTPUT);
-   pinMode(s1, OUTPUT);
-   pinMode(s2, OUTPUT);
-   pinMode(s3, OUTPUT);
-   pinMode(LED, OUTPUT);
-   pinMode(out, INPUT);
-
-   digitalWrite(s0, HIGH); // 20% scaling
-   digitalWrite(s1, LOW);
-   
-   // test LEDs
-   // TODO: write this into its own function
-   digitalWrite(LED, HIGH);
-   delay(1000);
-   digitalWrite(LED, LOW);
-
-   // sound
-   mp3trigger.setup(&Serial2);
-   Serial2.begin(MP3Trigger::serialRate());
-   mp3trigger.setVolume(speaker_volume);
-
-   // tft board
-   tft.initR(INITR_BLACKTAB);
-   tft_print_test();
+    // tft board
+    tft.initR(INITR_BLACKTAB);
+    testlines(ST77XX_BLUE);
 }
 
-// =======================================================================================
-//    Main Program Loop - This is the recurring check loop for entire sketch
-// =======================================================================================
-void loop()
-{   
-   // Make sure the PS3 Controller is working - skip main loop if not
-   if ( !readUSB() )
-   {
-     return;
-   }
+void loop() {
+    if ( !readUSB() ) {
+        return;
+    }
 
-   // If the PS3 controller has been connected - start processing the main controller routines
-   if (PS3Controller->PS3Connected) {
-   
-       // Read the PS3 Controller and set request state variables for this loop
-       readPS3Request();
-
-       // controller input happens every cycle to make sure the droid is still reactive in cases of failure
-       if (control_mode == 0) {
-        // inputs in control_mode 0
-        if (reqCircle) {
-          digitalWrite(LED, LOW);
-          control_mode = 1;
-        }
-        if (reqTriangle) {
-          control_mode = 2;
-          digitalWrite(LED, HIGH);
-        }        
-       } else if (control_mode == 1) {
-        // inputs in control_mode 1
-        if (reqCross) {
-          turn_direction *= -1;
-        }
-        if (reqCircle) {
-          control_mode = 1;
-          stop();
-        }
-        
-       } else if (control_mode == 2) {
-        // inputs in control_mode 2
-        if (reqTriangle) {
-          stop();
-          // trigger celebration sound
-          mp3trigger.trigger(CELEBRATION);
-          control_mode = 0;
-        }
-       }
-       // run tasks based on the mode we are in
-       if (millis() % CONTROL_MODE_REFRESH == 0) {
-         // control mode stuff
-         // do things based on what mode we are in
-         if (control_mode == 1) {
-          moveDroidManual(); 
-         }
-         if (control_mode == 2) {
-          //Serial.println("running autonomous");
-          if (millis() % 20 == 0) {
-            autonomousDriving();
-          }
-         }
-         if (control_mode == 0) {
-          if (currentTurn != 0 || currentSpeed != 0) {
-            Serial.println("stopping the droid");
-            currentTurn = 0;
-            currentSpeed = 0;
-            ST->stop();
-          }
-          // stuff
-         }
-       }
-       if (millis() % AUDIO_MODE_REFRESH == 0) {
-        // audio mode stuff
-        if (audio_mode == 0) {
-          // make sure we are quiet
-        } else if (audio_mode == 1) {
-          // ambient sound
-          ambient_sound();
-        } else if (audio_mode == 2) {
-          // jukebox mode
-          juke_box();
-        }
-       }
-
-       if (millis() % VIDEO_MODE_REFRESH == 0) {
-        // video mode stuff
-        
-       }
-
-       
-       // Ignore extra inputs from the PS3 Controller for 1/2 second from prior input
-       if (extraRequestInputs)
-       {
-          if ((previousRequestMillis + 500) < millis())
-          {
-              extraRequestInputs = false;
-          }
-       }
+    // If the PS3 controller has been connected - start processing the main controller routines
+    if (PS3Controller->PS3Connected) {
     
-       // If there was a PS3 request this loop - reset the request variables for next loop
-       if (reqMade) {
-           resetRequestVariables();
-           reqMade = false;
-       } 
-   }
+        // Read the PS3 Controller and set request state variables for this loop
+        readPS3Request();
+        /*
+        Controller actions
+        PLAY
+        PAUSE
+        joystick song change
+        joystick volume change
 
-   // Blink to show working heart beat on the Arduino control board
+        */
+        if (reqTriangle) {
+            // play
+            // start the song
+            page_mode = 1;
+            currentSelectedSongMillisStart = millis();
+            currentSelectedSongLength = 1000 * songLength[currentSelectedSongNumber];
+            mp3trigger.trigger(currentSelectedSongNumber);
+        }
+        if (reqCross) {
+            // stop the song
+            mp3trigger.stop();
+            page_mode = 0;
+        }
+        if (reqLeftJoyMade) {
+            // volume control
+            if (millis() % VOLUME_REFRESH == 0) {
+              change_volume();
+            }
+        }
+        if (reqRightJoyMade) {
+            // track selection
+            if (millis() % TRACK_REFRESH == 0) {
+              select_track();
+            }
+        }
+        if (millis() % DISPLAY_REFRESH == 0) {
+            if (page_mode == 0) {
+                main_page();
+            } else if (page_mode == 1) {
+                current_page();
+                if (millis() - currentSelectedSongMillisStart > currentSelectedSongLength) {
+                    page_mode = 0;
+                }
+            } else if (page_mode == 2) {
+                if (millis() - vol_triggered > vol_timeout) {
+                    page_mode = old_mode;
+                }
+                // display volume page
+                volume_page();
+            }
+        }
+
+
+        // Ignore extra inputs from the PS3 Controller for 1/2 second from prior input
+        if (extraRequestInputs) {
+            if ((previousRequestMillis + 500) < millis())
+            {
+                extraRequestInputs = false;
+            }
+        }
+        
+        // If there was a PS3 request this loop - reset the request variables for next loop
+        if (reqMade) {
+            resetRequestVariables();
+            reqMade = false;
+        }
+    }
+
+    // Blink to show working heart beat on the Arduino control board
    // If Arduino LED is not blinking - the sketch has crashed
    if ((blinkMillis + 500) < millis()) {
       if (blinkOn) {
@@ -405,22 +367,127 @@ void loop()
    // update mp3trigger
    mp3trigger.update();
 }
-
-// =======================================================================================
-//      ADD YOUR CUSTOM DROID FUNCTIONS STARTING HERE
-// =======================================================================================
-
-// jukebox (quiz)
-/*
-TODO: port this over after the quiz is done
-The original quiz is in its own folder
-
-*/
-void juke_box() {
-
-
+void change_volume() {
+    old_mode = page_mode;
+    int vol_direction = 0;
+    if (reqLeftJoyYValue > 0) {
+        vol_direction = 1;
+    } else {
+        vol_direction = -1;
+    }
+    speaker_volume += vol_direction;
+    if (speaker_volume > MAX_VOLUME) {
+        speaker_volume = MAX_VOLUME;
+    } else if (speaker_volume < MIN_VOLUME) {
+        speaker_volume = MIN_VOLUME;
+    }
+    vol_triggered = millis();
+    mp3trigger.setVolume(speaker_volume);
 }
 
+void select_track() {
+    // remember cannot go past 0 or max len
+    // no infinite scrolling
+    int track_direction = 0;
+    if (reqRightJoyYValue > 0) {
+        track_direction = 1;
+    } else {
+        track_direction = -1;
+    }
+    currentSelectedSongNumber += track_direction;
+    if (currentSelectedSongNumber < 0) {
+        currentSelectedSongNumber = 0;
+    } else if (currentSelectedSongNumber > 35) {
+        currentSelectedSongNumber = 35;
+    }
+}
+
+void main_page() {
+    // main page has the following contents:
+    // five songs - tick on the current song
+    // clear the screen:
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(0, 0);
+    tft.setTextWrap(false);
+        
+    // edge cases: overflow to the edge
+    // main case
+    int start = -2;
+    if (currentSelectedSongNumber < 2) {
+        start = -1 * currentSelectedSongNumber;
+    }
+    int end = start + 5;
+    if (currentSelectedSongNumber > 32) {
+        end = 35 - currentSelectedSongNumber;
+        start = end - 5;
+    }
+    Serial.print("start: ");
+    Serial.print(start);
+    Serial.print(" end: ");
+    Serial.println(end);
+    for (int i = start; i < end; i++) {
+        // display each line
+        String name = songTitle[currentSelectedSongNumber + i];
+        int inv_start = start * -1;
+        if (i != 0) {
+            tft.println(name);
+        } else {
+            String tag = ">>>";
+            tag.concat(name);
+            tft.println(tag);
+        }
+    }
+}
+
+void current_page() {
+    // display the current song and percent complete
+    String currentSongName = songTitle[currentSelectedSongNumber];
+    float real_percent_complete = (millis() - (songLength[currentSelectedSongNumber] + currentSelectedSongMillisStart)) / songLength[currentSelectedSongNumber];
+    int percent_complete = 100 * real_percent_complete;
+    String bars = "";
+    for (int i = 0; i < percent_complete / 10; i++) {
+        bars += '=';
+    }
+    if (percent_complete % 10 > 5) {
+        bars += '-';
+    }
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextWrap(false);
+    tft.println(currentSongName);
+    tft.print("percent complete: ");
+    tft.print(percent_complete);
+    tft.println("%");
+    tft.println("~~~~~");
+    tft.println(bars);
+}
+
+void volume_page() {
+    int vol_range = MAX_VOLUME - MIN_VOLUME;
+    float real_vol_percent = speaker_volume / vol_range;
+    int vol_percent = 100 * real_vol_percent;
+    String bars = "";
+    for (int i = 0; i < vol_percent / 10; i++) {
+        bars += '=';
+    }
+    if (vol_percent % 10 > 5) {
+        bars += '-';
+    }
+
+    // display the current volume
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextWrap(false);
+    tft.print("volume: ");
+    tft.print(vol_percent);
+    tft.println("%");
+    tft.println("");
+    tft.println(bars);
+    // remember: higher volume number is actually quieter volume
+}
 
 // video tft
 void testlines(uint16_t color) {
@@ -465,281 +532,7 @@ void testlines(uint16_t color) {
   }
 }
 
-void testdrawtext(char *text, uint16_t color) {
-  tft.setCursor(0, 0);
-  tft.setTextColor(color);
-  tft.setTextWrap(true);
-  tft.print(text);
-}
 
-void testfastlines(uint16_t color1, uint16_t color2) {
-  tft.fillScreen(ST77XX_BLACK);
-  for (int16_t y=0; y < tft.height(); y+=5) {
-    tft.drawFastHLine(0, y, tft.width(), color1);
-  }
-  for (int16_t x=0; x < tft.width(); x+=5) {
-    tft.drawFastVLine(x, 0, tft.height(), color2);
-  }
-}
-
-
-
-// sound
-
-void ambient_sound() {
-  
-}
-
-
-
-// movement
-
-
-void stop() {
-  ST->turn(0);
-  ST->drive(0);
-  droidMoving = false;
-}
-
-int distance(int a, int b) {
-  int c = a - b;
-  if (b < 0 && a > 0) {
-    c = b - a;
-  }
-  return abs(c);
-}
-
-void moveDroidManual() {
-  if (reqLeftJoyMade) {
-    // remap controller value to a custom max value
-    int desiredSpeed = (reqLeftJoyYValue / MAX_CONTROLLER) * MAX_SPEED * turn_direction * -1;
-    int desiredTurn = (reqLeftJoyXValue / MAX_CONTROLLER) * MAX_TURN * turn_direction; // invert turn so we turn the way our joystick moves
-    // need both of these values (turn, drive) for the motorcontroller
-    
-    Serial.println(distance(currentTurn, desiredTurn));
-    if (distance(currentSpeed, desiredSpeed) < 10) {
-      currentSpeed = desiredSpeed;
-    } else {
-      if (desiredSpeed > currentSpeed) {
-        // accelerating
-        currentSpeed += distance(desiredSpeed, currentSpeed) / CONTROLLER_RAMP;
-      } else {
-        // decelrating
-        currentSpeed -= distance(desiredSpeed, currentSpeed) / CONTROLLER_RAMP;
-      }
-    }
-    if (distance(currentTurn, desiredTurn) < 10) {
-      currentTurn = desiredTurn;
-    } else {
-      if (desiredTurn > currentTurn) {
-        currentTurn += distance(desiredTurn, currentTurn) / CONTROLLER_RAMP;
-      } else {
-        currentTurn -= distance(desiredTurn, currentTurn) / CONTROLLER_RAMP;
-      }
-    }
-    Serial.print("current turn:");
-    Serial.print(currentTurn);
-    Serial.print(" current speed:");
-    Serial.println(currentSpeed);
-    Serial.print("desired turn:");
-    Serial.print(desiredTurn);
-    Serial.print(" desired speed:");
-    Serial.println(desiredSpeed);
-    ST->turn(currentTurn);
-    ST->drive(currentSpeed);
-    if (!droidMoving) {
-      droidMoving = true;
-    }
-  } else {
-    if (droidMoving) {
-      if (currentSpeed == 0 && currentTurn == 0) {
-        ST->stop();
-        droidMoving = false;
-      } else {
-        currentSpeed = currentSpeed / 4;
-        currentTurn = currentTurn / 4;
-        if (distance(0, currentSpeed) < 5) {
-          currentSpeed = 0;
-        }
-        if (distance(0, currentTurn) < 5) {
-          currentTurn = 0;
-        }
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------------------
-//    Autonomous Functions + Light Sensor
-//        if red turn right
-//        if green turn left
-//        if blue go straight
-//        if it isnt one of those, stop
-//        red = 1, green = 3, blue = 2
-// --------------------------------------------------------------------------------------
-void autoDrive() {
-  droidMoving = true;
-  if (action == 1) {
-    if (currentColor == 1) {
-      // trigger sound blue to color 1
-      mp3trigger.trigger(BLUE_TO_RED);
-      action = 2;
-      Serial.println("turning in the positive direction");
-    } else if (currentColor == 3) {
-      // trigger sound blue to color 2
-      mp3trigger.trigger(BLUE_TO_GREEN);
-      action = 3;
-      Serial.println("turning in the negative direction");
-    }
-  } else if (action == 2) {
-    // turn right
-    currentSpeed = 0;
-    currentTurn = AUTO_SPEED * -1;
-    if (currentColor == 2) {
-      // trigger color 1 to blue
-      mp3trigger.trigger(BACK_TO_BLUE);
-    }
-  } else if (action == 3) {
-    // turn left
-    currentSpeed = 0;
-    currentTurn = AUTO_SPEED;
-    if (currentColor == 2) {
-      // trigger color 2 to blue
-      mp3trigger.trigger(BACK_TO_BLUE);
-    }
-  }
-  if (currentColor == 2) {
-    action = 1;
-    currentTurn = 0;
-    currentSpeed = AUTO_SPEED * -1; // technically its "backwards"...
-    Serial.println("going forward");
-  }
-  Serial.print("currentTurn: ");
-  Serial.println(currentTurn);
-  Serial.print("CurrentSpeed: ");
-  Serial.println(currentSpeed);
-  ST->turn(currentTurn);
-  ST->drive(currentSpeed);
-}
-
-// TODO: Calibrate map
-void readRedValue() {
-  int low_bound = 46;
-  int high_bound = 129;
-  digitalWrite(s2, LOW);
-  digitalWrite(s3, LOW);
-  data = pulseIn(out, LOW);
-  
-  rValue = data; // map(data, low_bound, high_bound, 255, 0);
-  
-}
-void readBlueValue() { // this is consistently detecting blue
-  int low_bound = 51;
-  int high_bound = 129;
-
-  digitalWrite(s2, LOW);
-  digitalWrite(s3, HIGH);
-  data = pulseIn(out, LOW);
-  
-  bValue = data; // map(data, low_bound, high_bound, 255, 0);
-  
-}
-void readGreenValue() { // this is consistently detecting green
-  int low_bound = 51;
-  int high_bound = 129;
-  digitalWrite(s2, HIGH);
-  digitalWrite(s3, HIGH);
-  data = pulseIn(out, LOW);
-  
-  gValue = data; // map(data, low_bound, high_bound, 255, 0);
-  
-}
-
-void readColor() {
-  /*
-  read each r,g,b value one at a time, if we have looped back around - set the current color
-
-  from early tests, it looks like the lowest raw value is the dominant color
-  */
-  int oldColor = currentColor;
-  if (currentRead == 1) {
-    readRedValue();
-    currentRead = 2;
-  } else if (currentRead == 2) {
-    readGreenValue();
-    currentRead = 3;
-  } else if (currentRead == 3) {
-    readBlueValue();
-    currentRead = 1;
-  }
-  if (currentRead == 1) {
-    // default color is red even though this might not be the case
-    // TODO: add detection for colors that mostly white (the floor) 
-    int currentLowest = rValue;
-    currentColor = 1;
-    if (bValue < currentLowest) {
-      currentLowest = bValue;
-      currentColor = 2;
-    }
-    if (gValue < currentLowest) {
-      currentLowest = gValue;
-      currentColor = 3;
-    }
-    if (distance(gValue, bValue) < COLOR_RANGE && distance(gValue, rValue) < COLOR_RANGE && distance(bValue, rValue) < COLOR_RANGE) {
-      Serial.print("unknown color: ");
-      Serial.print(rValue);
-      Serial.print(", ");
-      Serial.print(gValue);
-      Serial.print(", ");
-      Serial.println(bValue);
-    }
-    // TODO: if the colors are similar to each other, say the color is invalid
-  }
-  if (oldColor != currentColor) {
-    Serial.print("new color: ");
-    Serial.println(currentColor);
-    Serial.print("rgb: ");
-    Serial.print(rValue);
-    Serial.print(", ");
-    Serial.print(gValue);
-    Serial.print(", ");
-    Serial.println(bValue);
-  }
-}
-
-/*
-  Autonomous driving:
-    The idea is that you go forward when the color is blue and turn when you hit a side.
-    The right side is always green
-    The left side is alwasy red
-*/
-void autonomousDriving() {
-  // if STOP: return
-  // if green turn left
-  // if red turn right
-  // if blue go straight
-  readColor();
-  // going to need to do a check for "real" color or we can just set the current color to invalid (-1)
-  if (currentColor != -1) {
-    autoDrive();
-  } else {
-    Serial.println("stopped");
-    droidMoving = false;
-    currentSpeed = 0;
-    currentTurn = 0;
-    ST->stop();
-  }
-  
-  
-}
-
-// =======================================================================================
-//      YOUR CUSTOM DROID FUNCTIONS SHOULD END HERE
-// =======================================================================================
-
-// =======================================================================================
-//      CORE DROID CONTROL FUNCTIONS START HERE - EDIT WITH CAUTION
-// =======================================================================================
 // Read the PS3 Controller and set request state variables
 void readPS3Request()
 {

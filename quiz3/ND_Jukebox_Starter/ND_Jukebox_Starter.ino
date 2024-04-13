@@ -244,6 +244,15 @@ long vol_triggered = 0;
 #define VOLUME_REFRESH 250
 #define TRACK_REFRESH 250
 
+// sleep triggers
+long last_display_trigger = 0;
+long last_volume_trigger = 0;
+long last_track_refresh_trigger = 0;
+
+// graphics triggers
+bool clear_screen = false;
+
+
 void setup() {
     //Initialize Serial @ 115200 baud rate for Serial Monitor Debugging
     Serial.begin(115200);
@@ -281,6 +290,12 @@ void loop() {
         return;
     }
 
+    if (clear_screen) {
+        // clear the screen
+        tft.fillScreen(ST77XX_BLACK);
+
+        clear_screen = false;
+    }
     // If the PS3 controller has been connected - start processing the main controller routines
     if (PS3Controller->PS3Connected) {
     
@@ -297,39 +312,51 @@ void loop() {
         if (reqTriangle) {
             // play
             // start the song
+            clear_screen = true;
             page_mode = 1;
             currentSelectedSongMillisStart = millis();
             currentSelectedSongLength = 1000 * songLength[currentSelectedSongNumber];
             mp3trigger.trigger(currentSelectedSongNumber);
         }
         if (reqCross) {
+            clear_screen = true;
             // stop the song
             mp3trigger.stop();
             page_mode = 0;
         }
         if (reqLeftJoyMade) {
             // volume control
-            if (millis() % VOLUME_REFRESH == 0) {
-              change_volume();
+            if (millis() - last_volume_trigger > VOLUME_REFRESH) {
+                last_volume_trigger = millis();
+                clear_screen = true;
+                old_mode = page_mode;
+                page_mode = 2;
+                vol_triggered = millis();
+                change_volume();
             }
         }
         if (reqRightJoyMade) {
             // track selection
-            if (millis() % TRACK_REFRESH == 0) {
-              select_track();
+            if (millis() - last_track_refresh_trigger > TRACK_REFRESH) {
+                last_track_refresh_trigger = millis();
+                clear_screen = true;
+                select_track();
             }
         }
-        if (millis() % DISPLAY_REFRESH == 0) {
+        if (millis() - last_display_trigger > DISPLAY_REFRESH) {
+            last_display_trigger = millis();
             if (page_mode == 0) {
                 main_page();
             } else if (page_mode == 1) {
                 current_page();
                 if (millis() - currentSelectedSongMillisStart > currentSelectedSongLength) {
+                    clear_screen = true;
                     page_mode = 0;
                 }
             } else if (page_mode == 2) {
                 if (millis() - vol_triggered > vol_timeout) {
                     page_mode = old_mode;
+                    clear_screen = true;
                 }
                 // display volume page
                 volume_page();
@@ -406,7 +433,6 @@ void main_page() {
     // main page has the following contents:
     // five songs - tick on the current song
     // clear the screen:
-    tft.fillScreen(ST77XX_BLACK);
     tft.setTextColor(ST77XX_WHITE);
     tft.setCursor(0, 0);
     tft.setTextWrap(false);
@@ -426,6 +452,9 @@ void main_page() {
     Serial.print(start);
     Serial.print(" end: ");
     Serial.println(end);
+
+    // TODO: check if the tft library clears the space into which the character is being written
+    // if it does not, you will have to manually clear it
     for (int i = start; i < end; i++) {
         // display each line
         String name = songTitle[currentSelectedSongNumber + i];
@@ -443,7 +472,8 @@ void main_page() {
 void current_page() {
     // display the current song and percent complete
     String currentSongName = songTitle[currentSelectedSongNumber];
-    float real_percent_complete = (millis() - (songLength[currentSelectedSongNumber] + currentSelectedSongMillisStart)) / songLength[currentSelectedSongNumber];
+    // TODO: fix this percentage
+    float real_percent_complete = (millis() - (currentSelectedSongLength + currentSelectedSongMillisStart)) / currentSelectedSongLength;
     int percent_complete = 100 * real_percent_complete;
     String bars = "";
     for (int i = 0; i < percent_complete / 10; i++) {
@@ -452,7 +482,6 @@ void current_page() {
     if (percent_complete % 10 > 5) {
         bars += '-';
     }
-    tft.fillScreen(ST77XX_BLACK);
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextWrap(false);
@@ -477,7 +506,6 @@ void volume_page() {
     }
 
     // display the current volume
-    tft.fillScreen(ST77XX_BLACK);
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextWrap(false);

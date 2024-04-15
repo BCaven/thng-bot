@@ -1,8 +1,19 @@
 /*
 TODO when you get back to this
-update functions to have "sleep" periods after running
-make screen not clear unless necessary
+[DONE] update functions to have "sleep" periods after running
+[DONE] make screen not clear unless necessary
+[TODO] find better way to update screen when scrolling quickly
+[TODO] fix getting back to main page from volume popup
+[TODO] diagnose sound issue
+[TODO] fix "percent done" graphic
+[TODO] volume scrolling is not instant
+[TODO] fun graphics
 
+
+hardware:
+[TODO] cut wires to be minimum required length
+[TODO] install new battery holder
+[TODO] cable management
 */
 
 
@@ -188,7 +199,7 @@ long songLength[36]={166,157,136,169,165,163,162,168,140,184,129,180,150,128,124
 MP3Trigger mp3trigger;
 #define MAX_VOLUME 110
 #define MIN_VOLUME 1
-int speaker_volume = 110;
+int speaker_volume = 50;
 
 // tft board
 #define MISO 50
@@ -279,6 +290,12 @@ void setup() {
     mp3trigger.setup(&Serial2);
     Serial2.begin(MP3Trigger::serialRate());
     mp3trigger.setVolume(speaker_volume);
+
+    mp3trigger.setLooping(true,1);
+    mp3trigger.update();
+    delay(1000);
+    mp3trigger.setLooping(false,1);
+
 
     // tft board
     tft.initR(INITR_BLACKTAB);

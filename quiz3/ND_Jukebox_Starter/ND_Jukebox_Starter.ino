@@ -4,15 +4,16 @@ TODO when you get back to this
 [DONE] make screen not clear unless necessary
 [TODO] find better way to update screen when scrolling quickly
 [TODO] fix getting back to main page from volume popup
-[TODO] diagnose sound issue
+[DONE] diagnose sound issue
 [TODO] fix "percent done" graphic
 [TODO] volume scrolling is not instant
+[TODO] volume never goes back to the original page
 [TODO] fun graphics
 
 
 hardware:
 [TODO] cut wires to be minimum required length
-[TODO] install new battery holder
+[DONE] install new battery holder
 [TODO] cable management
 */
 
@@ -126,7 +127,7 @@ bool requestVolUp = false;
 bool requestVolDown = false;
 
 int currentSelectedSongNumber = 1;
-int currentSelectedSongLength = 166;
+long currentSelectedSongLength = 166;
 String currentSelectedSongTitle = "Walk the Line";
 long currentSelectedSongMillisStart = millis();
 float currentSelectedSongPercentComplete = 0;
@@ -251,18 +252,21 @@ int old_mode = 0;
 long vol_timeout = 1000;
 // when the volume button was last triggered
 long vol_triggered = 0;
-#define DISPLAY_REFRESH 300
+#define DISPLAY_REFRESH 400
 #define VOLUME_REFRESH 250
 #define TRACK_REFRESH 250
+#define CLEAR_REFRESH 50
 
 // sleep triggers
 long last_display_trigger = 0;
 long last_volume_trigger = 0;
 long last_track_refresh_trigger = 0;
+long last_clear_trigger = 0;
 
 // graphics triggers
-bool clear_screen = false;
-
+bool clear_screen = true;
+bool playing = false;
+bool first_clear = true;
 
 void setup() {
     //Initialize Serial @ 115200 baud rate for Serial Monitor Debugging
@@ -291,11 +295,6 @@ void setup() {
     Serial2.begin(MP3Trigger::serialRate());
     mp3trigger.setVolume(speaker_volume);
 
-    mp3trigger.setLooping(true,1);
-    mp3trigger.update();
-    delay(1000);
-    mp3trigger.setLooping(false,1);
-
 
     // tft board
     tft.initR(INITR_BLACKTAB);
@@ -309,13 +308,21 @@ void loop() {
 
     if (clear_screen) {
         // clear the screen
-        tft.fillScreen(ST77XX_BLACK);
+        if (millis() - last_clear_trigger > CLEAR_REFRESH) {
+            // only clear the screen if it has been more than X since the last clear
+            tft.fillScreen(ST77XX_BLACK);
+            clear_screen = false;
 
-        clear_screen = false;
+        }
+
     }
     // If the PS3 controller has been connected - start processing the main controller routines
     if (PS3Controller->PS3Connected) {
-    
+        if (first_clear) {
+            tft.fillScreen(ST77XX_BLACK);
+            first_clear = false;
+
+        }
         // Read the PS3 Controller and set request state variables for this loop
         readPS3Request();
         /*
@@ -329,54 +336,92 @@ void loop() {
         if (reqTriangle) {
             // play
             // start the song
+            last_clear_trigger = millis();
             clear_screen = true;
             page_mode = 1;
-            currentSelectedSongMillisStart = millis();
-            currentSelectedSongLength = 1000 * songLength[currentSelectedSongNumber];
-            mp3trigger.trigger(currentSelectedSongNumber);
+            if (!playing) {
+                currentSelectedSongMillisStart = millis();
+                Serial.println(songLength[currentSelectedSongNumber]);
+                currentSelectedSongLength = 1000 * songLength[currentSelectedSongNumber];
+                int trigger_song = songTrack[currentSelectedSongNumber];
+                mp3trigger.trigger(trigger_song);
+                playing = true;
+            }
         }
         if (reqCross) {
+            last_clear_trigger = millis();
             clear_screen = true;
+            Serial.println("stopping music because the user asked to stop it");
             // stop the song
-            mp3trigger.stop();
+            //mp3trigger.stop();
+            stop_music();
             page_mode = 0;
         }
-        if (reqLeftJoyMade) {
+        if (millis() - last_volume_trigger > VOLUME_REFRESH) {
             // volume control
-            if (millis() - last_volume_trigger > VOLUME_REFRESH) {
+            if (reqLeftJoyMade) {
                 last_volume_trigger = millis();
+                last_clear_trigger = millis();
                 clear_screen = true;
-                old_mode = page_mode;
+                if (page_mode != 2) {
+                  // do not go "back" to the volume page
+                  old_mode = page_mode;
+                }
+                Serial.print("old page mode is: ");
+                Serial.println(old_mode);
                 page_mode = 2;
                 vol_triggered = millis();
                 change_volume();
             }
         }
-        if (reqRightJoyMade) {
-            // track selection
-            if (millis() - last_track_refresh_trigger > TRACK_REFRESH) {
-                last_track_refresh_trigger = millis();
-                clear_screen = true;
-                select_track();
+        if (millis() - last_track_refresh_trigger > TRACK_REFRESH) {
+            if (page_mode == 0) {
+                // must be in the home page to switch songs
+                // track selection
+                if (reqRightJoyMade) {
+                    last_track_refresh_trigger = millis();
+                    last_clear_trigger = millis();
+                    clear_screen = true;
+                    select_track();
+                }
             }
         }
         if (millis() - last_display_trigger > DISPLAY_REFRESH) {
             last_display_trigger = millis();
             if (page_mode == 0) {
                 main_page();
+                // if it doesnt actually stop, might just want to play track '0' which does not actually exist
+                //mp3trigger.stop();
+                stop_music();
+                playing = false;
             } else if (page_mode == 1) {
+                clear_lower_block();
+
                 current_page();
+                //clear_screen = true;
                 if (millis() - currentSelectedSongMillisStart > currentSelectedSongLength) {
+                    Serial.println("stopped the song because it finished playing");
+                    last_clear_trigger = millis();
                     clear_screen = true;
                     page_mode = 0;
                 }
             } else if (page_mode == 2) {
                 if (millis() - vol_triggered > vol_timeout) {
-                    page_mode = old_mode;
+                    Serial.println("going back to the old page");
+                    if (playing) {
+                      page_mode = 1;
+                    } else {
+                      page_mode = 0;
+                    }
                     clear_screen = true;
+                    last_clear_trigger = millis();
+
                 }
                 // display volume page
+                clear_lower_block();
+
                 volume_page();
+
             }
         }
 
@@ -394,6 +439,9 @@ void loop() {
             resetRequestVariables();
             reqMade = false;
         }
+    } else {
+          tft.setCursor(0, 0);
+          tft.println("please connect the controller");
     }
 
     // Blink to show working heart beat on the Arduino control board
@@ -411,12 +459,26 @@ void loop() {
    // update mp3trigger
    mp3trigger.update();
 }
+
+void clear_lower_block() {
+  int w = tft.width();
+  int h = tft.height() - 8;
+  tft.fillRect(0, 8, w, h, ST77XX_BLACK);
+}
+
+void stop_music() {
+    mp3trigger.trigger(0);
+}
+
+
 void change_volume() {
     old_mode = page_mode;
     int vol_direction = 0;
     if (reqLeftJoyYValue > 0) {
+        Serial.println("turning the volume up (technically down)");
         vol_direction = 1;
     } else {
+        Serial.println("turning the volume down (technically up)");
         vol_direction = -1;
     }
     speaker_volume += vol_direction;
@@ -461,22 +523,25 @@ void main_page() {
         start = -1 * currentSelectedSongNumber;
     }
     int end = start + 5;
-    if (currentSelectedSongNumber > 32) {
-        end = 35 - currentSelectedSongNumber;
+    if (currentSelectedSongNumber > 33) {
+        end = 36 - currentSelectedSongNumber;
         start = end - 5;
     }
-    Serial.print("start: ");
-    Serial.print(start);
-    Serial.print(" end: ");
-    Serial.println(end);
+    //Serial.print("start: ");
+    //Serial.print(start);
+    //Serial.print(" end: ");
+    //Serial.println(end);
 
     // TODO: check if the tft library clears the space into which the character is being written
     // if it does not, you will have to manually clear it
+    // it does clear it
     for (int i = start; i < end; i++) {
         // display each line
         String name = songTitle[currentSelectedSongNumber + i];
         int inv_start = start * -1;
         if (i != 0) {
+            tft.print(currentSelectedSongNumber + i);
+            tft.print("  -  ");
             tft.println(name);
         } else {
             String tag = ">>>";
@@ -490,8 +555,11 @@ void current_page() {
     // display the current song and percent complete
     String currentSongName = songTitle[currentSelectedSongNumber];
     // TODO: fix this percentage
-    float real_percent_complete = (millis() - (currentSelectedSongLength + currentSelectedSongMillisStart)) / currentSelectedSongLength;
-    int percent_complete = 100 * real_percent_complete;
+    long how_far_we_are = millis() - currentSelectedSongMillisStart;
+    double real_percent_complete = double(how_far_we_are) / double(currentSelectedSongLength);
+    //                 if (millis() - currentSelectedSongMillisStart > currentSelectedSongLength) {
+
+    long percent_complete = int(real_percent_complete * 100.0);
     String bars = "";
     for (int i = 0; i < percent_complete / 10; i++) {
         bars += '=';
@@ -508,12 +576,16 @@ void current_page() {
     tft.println("%");
     tft.println("~~~~~");
     tft.println(bars);
+    //tft.println(real_percent_complete);
+    //tft.println(currentSelectedSongMillisStart);
+    //tft.println(currentSelectedSongLength);
+    //tft.println(how_far_we_are);
 }
 
 void volume_page() {
     int vol_range = MAX_VOLUME - MIN_VOLUME;
-    float real_vol_percent = speaker_volume / vol_range;
-    int vol_percent = 100 * real_vol_percent;
+    double real_vol_percent = double(vol_range - speaker_volume) / double(vol_range);
+    long vol_percent = int(100.0 * real_vol_percent);
     String bars = "";
     for (int i = 0; i < vol_percent / 10; i++) {
         bars += '=';
@@ -526,6 +598,8 @@ void volume_page() {
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE);
     tft.setTextWrap(false);
+    //tft.print("raw audio: ");
+    //tft.println(real_vol_percent);
     tft.print("volume: ");
     tft.print(vol_percent);
     tft.println("%");
@@ -777,10 +851,10 @@ void readPS3Request()
             char xString[5];
             itoa(currentValueX, xString, 10);
 
-            Serial.print("LEFT Joystick Y Value: ");
-            Serial.println(yString);
-            Serial.print("LEFT Joystick X Value: ");
-            Serial.println(xString);
+            //Serial.print("LEFT Joystick Y Value: ");
+            //Serial.println(yString);
+            //Serial.print("LEFT Joystick X Value: ");
+            //Serial.println(xString);
 
             if (currentValueY > joystickDeadZoneRange) {
                 Serial.println("Left Joystick DOWN");
@@ -836,10 +910,10 @@ void readPS3Request()
             char xString[5];
             itoa(currentValueX, xString, 10);
 
-            Serial.print("RIGHT Joystick Y Value: ");
-            Serial.println(yString);
-            Serial.print("RIGHT Joystick X Value: ");
-            Serial.println(xString);
+            //Serial.print("RIGHT Joystick Y Value: ");
+            //Serial.println(yString);
+            //Serial.print("RIGHT Joystick X Value: ");
+            //Serial.println(xString);
 
             if (currentValueY > joystickDeadZoneRange) {
                 Serial.println("Right Joystick DOWN");

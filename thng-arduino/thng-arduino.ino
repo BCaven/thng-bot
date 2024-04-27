@@ -14,8 +14,17 @@ Tasks:
 [TODO] time how long it takes for the tft to refresh/draw shapes (specifically filling rectangles)
 [TODO] popup windows
 [TODO] custom event 1
+  [DONE] planning
+  [TODO] code
+  [TODO] hardware
 [TODO] custom event 2
+  [TODO] planning
+  [TODO] code
+  [TODO] hardware
 [TODO] custom event 3
+  [TODO] planning
+  [TODO] code
+  [TODO] hardware
 [TODO] hidden feature: jukebox (space/time permitting)
 [TODO] Physical build
 [TODO] servo wiring/setup
@@ -72,6 +81,27 @@ Video:
   the animation plays
 
   also look into displaying images
+
+Physical build considerations:
+using buttons/stuff to give the back of the droid a "control panel"
+would be funny to actually wire them to the pico or something
+
+panels:
+  put them on a 3d printed skeleton
+  would be cool to have them "loosely" mounted so they can shift and move a little bit
+    maybe this is where the servo comes in
+back panel:
+  "exposed" (fake) circuitry that looks half finished (maybe use the dead board?)
+  button array near the tft to serve as a fake UI
+
+bones:
+  have as few as possible
+  maybe print "joints" that give the panels a little bit of wiggle room
+    will need to cut the panels to fit pretty well so they can support each other
+  experiment with vibrational motors to see how well they can "shake" the panels
+
+servo motor:
+  have it "push" the panels to make it look like the top of the droid is opening
 
 */
 
@@ -281,6 +311,15 @@ Timing control
 #define CONTROL_MODE_REFRESH 20
 #define TFT_DISPLAY_REFRESH 400
 #define CONTROLLER_REFRESH 10
+// timing control for custom sequences
+// control for which part of the sequence we are on
+int sequence_location = 0;
+// loading dots when booting (...)
+long boot_dot_refresh = 1000;
+long last_boot_dot_trigger = 0;
+int num_boot_dots = 0;
+// corruption animation
+
 
 // =======================================================================================
 //                                 Main Program
@@ -351,6 +390,7 @@ void loop()
     // clear the screen
     if (millis() - last_clear_trigger > CLEAR_REFRESH)
     {
+      last_clear_trigger = millis();
       tft.fillScreen(ST77XX_BLACK);
       clear_screen = false;
     }
@@ -361,6 +401,7 @@ void loop()
   {
     if (millis() - last_controller_refresh > CONTROLLER_REFRESH) {
       // Read the PS3 Controller and set request state variables for this loop
+      last_controller_refresh = millis();
       readPS3Request();
       if (control_mode == 0)
       {
@@ -416,20 +457,21 @@ void loop()
     if (control_mode == 1)
     {
       if (millis() - last_manual_trigger > MANUAL_MODE_REFRESH) {
+        last_manual_trigger = millis();
         moveDroidManual();
       }
-    }
-    if (control_mode == 2)
+    } else if (control_mode == 2)
     {
       // Serial.println("running autonomous");
       if (millis() - last_autonomous_trigger > AUTO_MODE_REFRESH)
       {
+        last_autonomous_trigger = millis();
         autonomousDriving();
       }
-    }
-    if (control_mode == 0)
+    } else if (control_mode == 0)
     {
-      if (millis() - last_controller_mode_trigger > CONTROL_MODE_REFRESH) {
+      if (millis() - last_control_mode_trigger > CONTROL_MODE_REFRESH) {
+        last_control_mode_trigger = millis();
         if (currentTurn != 0 || currentSpeed != 0)
         {
           Serial.println("stopping the droid");
@@ -438,6 +480,16 @@ void loop()
           ST->stop();
         }
         // TODO: decide if there is going to be a special idling thing
+      }
+    } else if (control_mode == 3) {
+      // custom routine 1
+      if (millis() - last_control_mode_trigger > custom_routine_refresh) {
+        last_control_mode_trigger = millis();
+        // make the custom_routine_refresh random
+        custom_routine_refresh = 100; // TODO: make this random
+        custom_routine_1();
+        sequence_location += 1;
+
       }
     }
     
@@ -509,9 +561,98 @@ void loop()
 Routine 1:
 the thing comes to life
 
+Scrolling "boot" text to start then gets corrupted
+
+remember, you can use setTextColor(foreground, background) to clear the area behind the text
+
+NOTE: these will have to be split into several subroutines that run one at a time so the droid
+is still responsive during the routine
 */
 void custom_routine_1() {
+  // start the boot
+  // might not worry about scrolling text for now - it would be cool but its a lot of attention
+  // for something that is very hard to see at the end of the day
+  if (sequence_location == 1) {
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.println("Beginning boot sequence...");
+  } else if (sequence_location == 2) {
+    tft.print("Checking peripherals");
+  } else if (sequence_location == 3) {
+    boot_dots();
+  } else if (sequence_location == 4) {
+    tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    tft.println("DONE");
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  } else if (sequence_location == 5) {
+    tft.println("importing external libraries:");
+  } else if (sequence_location == 6) {
+    tft.println("motor control - IMPORTED");
+  } else if (sequence_location == 7) {
+    tft.println("power management - imported");
+  } else if (sequence_location == 8) {
+    tft.println("importing LED controller");
+  } else if (sequence_location == 9) {
+    // test LEDs
+  } else if (sequence_location == 10) {
+    tft.print("LED setup ");
+    tft.setTextColor(ST7735_GREEN, ST7735_BLACK);
+    tft.println("COMPLETE");
+    tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+  } else if (sequence_location == 11) {
+    tft.println("attempting to import soul");
+  } else if (sequence_location == 12) {
+    boot_dots();
+  } else if (sequence_location == 13) {
+    // maybe make this text bigger/overwrite the entire screen
+    tft.println("FAILED");
+  } else if (sequence_location == 14) {
+    // attempting import a second time
+    tft.println("retrying");
+  } else if (sequence_location == 15) {
+    boot_dots();
+  } else if (sequence_location == 16) {
+    // corruption begins to occur but isnt super serious
+    tft.println("FAILED");
+  } else if (sequence_location == 17) {
+    // corruption animation
+    corruption_animation();
+  } else if (sequence_location == 18) {
+    // corruption complete
+    // this should include motors twitching, lights flashing and the tft spazing out
+  } else if (sequence_location == 19) {
+    // uhh something, this is probably the end
+  }
 
+}
+void boot_dots() {
+  // TODO: timing code so the next dot gets printed at a random time
+  if (millis() - last_boot_dot_trigger > boot_dot_refresh) {
+    num_boot_dots += 1;
+    tft.print(".");
+  }
+}
+/*
+TODO: decide how you want to store/render the animation
+
+could make the animation then use a python script to convert it to a string
+then have the animation script write the next pixel
+it would probably only be a couple frames anyways so it should be fine
+*/
+void corruption_animation() {
+
+}
+void corruption_complete() {
+  // this might be better as its own sequence
+
+  /*
+  Things that should be happening:
+  LEDs going crazy
+  Wheels twitching
+  servo doing *something*
+  maybe hook up some vibrational motors to the panels so the panels shake
+
+  */
 }
 
 /*
@@ -520,6 +661,7 @@ the thing tries to eat you
 
 */
 void custom_routine_2() {
+
 
 }
 

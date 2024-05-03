@@ -168,6 +168,7 @@ boolean extraRequestInputs = false;
 // ---------------------------------------------------------------------------------------
 
 // Main state varable to determine if a request has been made by the PS3 Controller
+long last_controller_refresh = 0;
 boolean reqMade = false;
 boolean reqLeftJoyMade = false;
 boolean reqRightJoyMade = false;
@@ -223,6 +224,7 @@ int currentSpeed = 0;
 int currentTurn = 0;
 #define MAX_SPEED 70
 boolean droidMoving = false;
+long last_manual_trigger = 0;
 
 // --------------------------------------------------------------------------------------
 //  Color Sensor
@@ -245,17 +247,21 @@ int currentRead = 1;  // 1=red 2=green = 3=blue
 // ---------------------------------------------------------------------------------------
 //  Autonomous
 // ---------------------------------------------------------------------------------------
-// this boolean should be unnecessary if the program is written using modes instead
-// TODO: confirm and remove all mentions
-boolean autonomous = false;
 int mode = 0;
 #define COLOR_RANGE 30
 int action = 1; // 1 = forward 2 = right 3 = left
 #define AUTO_SPEED 40
+long last_autonomous_trigger = 0;
 
-// --------------------------------------------------------------------------------------
-// SOUND
-// --------------------------------------------------------------------------------------
+/*
+Sound
+
+TODO:
+EVA dashboard sounds
+record sounds
+add sounds to sd card
+
+*/
 MP3Trigger mp3trigger;
 
 // length of audio tracks
@@ -274,6 +280,16 @@ bool playing = false;
 #define MIN_SPEAKER_VOLUME 110
 int speaker_volume = 50;
 
+// dealing with audio tracks
+int num_audio_tracks = 0;
+long last_audio_trigger = 0;
+long last_audio_mode_refresh = 0;
+// length in millis
+long track_lengths[10] = {
+  10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+};
+
+
 // --------------------------------------------------------------------------------------
 // VIDEO
 // --------------------------------------------------------------------------------------
@@ -286,6 +302,17 @@ int speaker_volume = 50;
 #define CARD_CS 6
 Adafruit_ST7735 tft = Adafruit_ST7735(TCS, TDC, RST);
 
+/*
+LEDs
+
+*/
+#define led_clock 9
+#define led_data 8
+#define led_latch 11
+Adafruit_TLC5947 LEDControl = Adafruit_TLC5947(1, led_clock, led_data, led_latch);
+#define LED_MAX_BRIGHT 4000
+#define NUM_LEDS 3
+int current_led = 0;
 // --------------------------------------------------------------------------------------
 // MODES (audio, video, control)
 // --------------------------------------------------------------------------------------
@@ -293,6 +320,7 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TCS, TDC, RST);
 #define CONTROL_MODE_REFRESH 100
 #define AUTO_MODE_REFRESH 20
 #define MANUAL_MODE_REFRESH 50
+long last_control_mode_trigger = 0;
 
 int audio_mode = 0;   // 0 = quiet, 1 = ambient
 int video_mode = 0;   // TODO: define these
@@ -300,8 +328,20 @@ int control_mode = 0; // 0 = standby, 1 = manual, 2 = autonomous
 
 // video control
 #define CLEAR_REFRESH 100
-bool clear_screen = false;
+bool clear_screen = true;
 long last_clear_trigger = 0;
+long last_video_mode_refresh = 0;
+
+// motor control
+bool twitchy = false;
+#define MOTOR_MODE_REFRESH 1000
+long last_motor_mode_refresh = 0;
+int motor_mode = 0;
+
+// LED modes
+#define LED_MODE_REFRESH 1000
+long last_led_mode_refresh = 0;
+int led_mode = 0;
 
 /*
 Timing control
@@ -311,14 +351,45 @@ Timing control
 #define CONTROL_MODE_REFRESH 20
 #define TFT_DISPLAY_REFRESH 400
 #define CONTROLLER_REFRESH 10
+#define CUSTOM_ROUTINE_MIN 1000
+#define CUSTOM_ROUTINE_MAX 2000
+#define DOT_MIN_REFRESH 500
+#define DOT_MAX_REFRESH 3000
+
+/*
+Ambient tracks:
+uhhhhhhhhh
+*/
+#define AMBIENT_SOUND_REFRESH 2000
+long last_ambient_sound = 0;
+int FIRST_AMBIENT_TRACK = 0;
+int LAST_AMBIENT_TRACK = 10;
+
+/*
+Custom sequences
+*/
+// picking sequences
+// TODO: do this
 // timing control for custom sequences
 // control for which part of the sequence we are on
-int sequence_location = 0;
+int sequence_location = 1;
+#define SEQUENCE_1_NUM_LOCATIONS 19
+bool go_to_next_sequence_location = false;
 // loading dots when booting (...)
 long boot_dot_refresh = 1000;
 long last_boot_dot_trigger = 0;
-int num_boot_dots = 0;
+int num_dots = 0;
+bool printing_dots = false;
+int custom_routine_sound_track = 0;
+bool custom_rotuine_start_new_sound = false;
+long custom_routine_refresh = 0;
 // corruption animation
+
+// twitching motors
+#define MIN_TWITCH 70
+#define MAX_TWITCH 90
+#define MIN_TWITCH_TURN 40
+#define MAX_TWITCH_TURN 50
 
 
 // =======================================================================================
@@ -359,6 +430,33 @@ void setup()
   // tft board
   tft.initR(INITR_BLACKTAB);
   testlines(ST77XX_BLUE);
+
+  // LED board
+  LEDControl.begin();
+  // turn them all off
+  Serial.println("Turning the lights off");
+  for (int i = 0; i < NUM_LEDS; i++) {
+    LEDControl.setPWM(i, 0);
+  }
+  LEDControl.write();
+  delay(1000);
+  Serial.println("Turning the lights on");
+  // turn them all on
+  for (int i = 0; i < NUM_LEDS; i++) {
+    LEDControl.setPWM(i, LED_MAX_BRIGHT);
+  }
+  LEDControl.write();
+  Serial.println("PWM values:");
+  for (int i = 0; i < NUM_LEDS; i++) {
+    Serial.println(LEDControl.getPWM(i));
+  }
+  delay(1000);
+  Serial.println("Turning the lights off");
+  // turn them all back off
+  for (int i = 0; i < NUM_LEDS; i++) {
+    LEDControl.setPWM(i, 0);
+  }
+  LEDControl.write();
 }
 
 /*
@@ -387,6 +485,7 @@ void loop()
   }
   if (clear_screen)
   {
+    
     // clear the screen
     if (millis() - last_clear_trigger > CLEAR_REFRESH)
     {
@@ -395,7 +494,6 @@ void loop()
       clear_screen = false;
     }
   }
-
   // If the PS3 controller has been connected - start processing the main controller routines
   if (PS3Controller->PS3Connected)
   {
@@ -418,6 +516,8 @@ void loop()
         }
         if (reqCross) {
           // start the selected ambient routine
+          Serial.println("Switching to control mode 3");
+          control_mode = 3;
         }
         if (reqArrowUp) {
           // go up one routine
@@ -459,6 +559,7 @@ void loop()
       if (millis() - last_manual_trigger > MANUAL_MODE_REFRESH) {
         last_manual_trigger = millis();
         moveDroidManual();
+        motor_mode = -1;
       }
     } else if (control_mode == 2)
     {
@@ -467,9 +568,13 @@ void loop()
       {
         last_autonomous_trigger = millis();
         autonomousDriving();
+        motor_mode = -1;
       }
     } else if (control_mode == 0)
     {
+      // TODO: make sure all of the frame counters are reset
+      sequence_location = 0;
+      num_dots = 0;
       if (millis() - last_control_mode_trigger > CONTROL_MODE_REFRESH) {
         last_control_mode_trigger = millis();
         if (currentTurn != 0 || currentSpeed != 0)
@@ -486,19 +591,46 @@ void loop()
       if (millis() - last_control_mode_trigger > custom_routine_refresh) {
         last_control_mode_trigger = millis();
         // make the custom_routine_refresh random
-        custom_routine_refresh = 100; // TODO: make this random
+        custom_routine_refresh = random(CUSTOM_ROUTINE_MIN, CUSTOM_ROUTINE_MAX); // TODO: make this random
         custom_routine_1();
-        sequence_location += 1;
+        if (go_to_next_sequence_location) {
+          go_to_next_sequence_location = false;
+          sequence_location += 1;
+          Serial.print("sequence location: ");
+          Serial.println(sequence_location);
+        }
+        if (sequence_location > SEQUENCE_1_NUM_LOCATIONS) {
+          // go back to the normal mode
+          control_mode = 0;
+          Serial.println("going back to the normal mode");
+        }
 
       }
     }
     
+    if (millis() - last_motor_mode_refresh > MOTOR_MODE_REFRESH) {
+      last_motor_mode_refresh = millis();
+      if (motor_mode == 0) {
+        ST->stop();
+      } else if (motor_mode == 1) {
+        // twitchy
+        motor_twitch();
+      } else if (motor_mode == 2) {
+        // something else
+      } else if (motor_mode == 3) {
+        // a third thing ig
+      } else {
+        // designed for autonomous and manual modes, this will just do nothing
+      }
+
+    }
     if (millis() - last_audio_mode_refresh > AUDIO_MODE_REFRESH)
     {
       // audio mode stuff
       if (audio_mode == 0)
       {
         // make sure we are quiet
+        mp3trigger.trigger(0);
       }
       else if (audio_mode == 1)
       {
@@ -508,13 +640,31 @@ void loop()
       else if (audio_mode == 2)
       {
         // jukebox mode
-        juke_box();
+        //juke_box();
+      } else if (audio_mode == 3) {
+        // custom routines
+        // TODO; make function for this
+        custom_routine_sound();
       }
     }
 
     if (millis() - last_video_mode_refresh > VIDEO_MODE_REFRESH)
     {
       // video mode stuff
+    }
+
+    if (millis() - last_led_mode_refresh > LED_MODE_REFRESH) {
+      last_led_mode_refresh = millis();
+      if (led_mode == 0) {
+        // do nothing
+      } else if (led_mode == 1) {
+        // blink random
+        led_random_blink();
+      } else if (led_mode == 2) {
+        // TMP turn off and go to mode 0
+        led_all_off();
+        led_mode = 0;
+      }
     }
 
     // Ignore extra inputs from the PS3 Controller for 1/2 second from prior input
@@ -552,6 +702,8 @@ void loop()
   }
   // update mp3trigger
   mp3trigger.update();
+  // update LEDs
+  LEDControl.write();
 }
 
 // =======================================================================================
@@ -569,67 +721,152 @@ NOTE: these will have to be split into several subroutines that run one at a tim
 is still responsive during the routine
 */
 void custom_routine_1() {
+  audio_mode = 3;
   // start the boot
   // might not worry about scrolling text for now - it would be cool but its a lot of attention
   // for something that is very hard to see at the end of the day
   if (sequence_location == 1) {
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.setTextSize(1);
     tft.println("Beginning boot sequence...");
+    // TODO: sound "booting..."
+    
+    custom_routine_sound_track = 1;
+    custom_rotuine_start_new_sound = true;
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 2) {
     tft.print("Checking peripherals");
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 3) {
     boot_dots();
   } else if (sequence_location == 4) {
     tft.setTextColor(ST77XX_GREEN, ST77XX_BLACK);
     tft.println("DONE");
     tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 5) {
     tft.println("importing external libraries:");
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 6) {
     tft.println("motor control - IMPORTED");
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 7) {
-    tft.println("power management - imported");
+    tft.println("power management - IMPORTED");
+
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 8) {
     tft.println("importing LED controller");
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 9) {
     // test LEDs
+    test_leds();
   } else if (sequence_location == 10) {
     tft.print("LED setup ");
     tft.setTextColor(ST7735_GREEN, ST7735_BLACK);
     tft.println("COMPLETE");
     tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 11) {
     tft.println("attempting to import soul");
+    // TODO: sound "attempting to import soul"
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 12) {
     boot_dots();
   } else if (sequence_location == 13) {
     // maybe make this text bigger/overwrite the entire screen
+    tft.setTextColor(ST7735_RED, ST7735_BLACK);
+
     tft.println("FAILED");
+    tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+    led_mode = 1;
+    // sound "FAILED"
+
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 14) {
     // attempting import a second time
     tft.println("retrying");
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 15) {
     boot_dots();
   } else if (sequence_location == 16) {
     // corruption begins to occur but isnt super serious
-    tft.println("FAILED");
+    // bigger text
+    tft.setTextSize(3);
+    tft.setCursor(50, 50);
+    tft.setTextColor(ST7735_RED);
+
+    tft.println("FAILED");    
+    // sound "FAILED"
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 17) {
     // corruption animation
     corruption_animation();
   } else if (sequence_location == 18) {
+    tft.setTextSize(2);
+    tft.setCursor(20, 20);
+    tft.setTextColor(ST7735_WHITE);
+    tft.println("CRITICAL ERROR ENCOUNTERED");
+    motor_mode = 1;
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
+    tft.println("EXITING");
+    // and then it dips
+    custom_routine_sound_track = 2;
+    custom_rotuine_start_new_sound = true;
+    
+    // sound "CRITICAL ERROR ENCOUNTERED"
     // corruption complete
     // this should include motors twitching, lights flashing and the tft spazing out
+    go_to_next_sequence_location = true;
   } else if (sequence_location == 19) {
     // uhh something, this is probably the end
+    // sound "the thing"
+    motor_mode = 0;
+    led_mode = 2;
+    audio_mode = 0;
+    go_to_next_sequence_location = true;
+    tft.fillScreen(ST7735_BLACK);
   }
-
 }
 void boot_dots() {
-  // TODO: timing code so the next dot gets printed at a random time
   if (millis() - last_boot_dot_trigger > boot_dot_refresh) {
-    num_boot_dots += 1;
+    // TODO: add "beep"
+    num_dots += 1;
     tft.print(".");
+    boot_dot_refresh = random(DOT_MIN_REFRESH, DOT_MAX_REFRESH);
+    if (num_dots >= 3) {
+      go_to_next_sequence_location = true;
+      // reset the function
+      num_dots = 0;
+    }
+  }
+}
+void test_leds() {
+  // turn the previous one off
+  if (current_led > 0) {
+    LEDControl.setPWM(current_led - 1, 0);
+  }
+  // TODO: add a tick noise when the led turns on
+  LEDControl.setPWM(current_led, LED_MAX_BRIGHT);
+
+  current_led += 1;
+  if (current_led > NUM_LEDS) {
+    go_to_next_sequence_location = true;
+  }
+}
+void led_random_blink() {
+  int rled = random(0, NUM_LEDS);
+  if (LEDControl.getPWM(rled) > 0) {
+    // turn the led off because it is already on
+    LEDControl.setPWM(rled, 0);
+  } else {
+    LEDControl.setPWM(rled, LED_MAX_BRIGHT);
+  }
+}
+void led_all_off() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    LEDControl.setPWM(i, 0);
   }
 }
 /*
@@ -640,7 +877,18 @@ then have the animation script write the next pixel
 it would probably only be a couple frames anyways so it should be fine
 */
 void corruption_animation() {
-
+  // TODO
+  for (int16_t x = 0; x < tft.width(); x += 6)
+  {
+    tft.drawLine(0, 0, x, tft.height() - 1, ST7735_RED);
+    delay(0);
+  }
+  for (int16_t x = 0; x < tft.width(); x += 6)
+  {
+    tft.drawLine(x, 0, x, tft.height() - 1, ST7735_RED);
+    delay(0);
+  }
+  go_to_next_sequence_location = true;
 }
 void corruption_complete() {
   // this might be better as its own sequence
@@ -653,6 +901,29 @@ void corruption_complete() {
   maybe hook up some vibrational motors to the panels so the panels shake
 
   */
+}
+void motor_twitch() {
+  int invert_twitch = MAX_TWITCH * -1;
+  int invert_twitch_turn = MAX_TWITCH_TURN * -1;
+  int drive = random(invert_twitch, MAX_TWITCH);
+  int rot = random(invert_twitch_turn, MAX_TWITCH_TURN);
+  // make sure we are above the minimum
+  if (drive > 0 && drive < MIN_TWITCH) {
+    drive = MIN_TWITCH;
+  }
+  if (drive < 0 && drive > MIN_TWITCH * -1) {
+    drive = -1 * MIN_TWITCH;
+  }
+  if (rot > 0 && rot < MIN_TWITCH_TURN) {
+    rot = MIN_TWITCH_TURN;
+  }
+  if (rot < 0 && rot > MIN_TWITCH_TURN * -1) {
+    rot = -1 * MIN_TWITCH_TURN;
+  }
+  currentTurn = rot;
+  currentSpeed = drive;
+  ST->turn(currentTurn);
+  ST->drive(currentSpeed);
 }
 
 /*
@@ -766,6 +1037,25 @@ void testfastlines(uint16_t color1, uint16_t color2)
 
 void ambient_sound()
 {
+  if (millis() - last_ambient_sound > AMBIENT_SOUND_REFRESH) {
+    int raw_sound = random(0, LAST_AMBIENT_TRACK + 1);
+    if (raw_sound < FIRST_AMBIENT_TRACK) {
+      // give the option for the ambient sound to be nothing
+      raw_sound = 0;
+    }
+
+    mp3trigger.trigger(raw_sound);
+    // TODO: might not want to track ambient sounds so you can interupt them
+    last_audio_trigger = millis(); 
+    last_ambient_sound = millis();
+  }
+}
+void custom_routine_sound() {
+  if (custom_rotuine_start_new_sound) {
+    custom_rotuine_start_new_sound = false;
+    mp3trigger.trigger(custom_routine_sound_track);
+    last_audio_trigger = millis();
+  }
 }
 
 // movement
@@ -829,6 +1119,9 @@ void moveDroidManual()
         currentTurn -= distance(desiredTurn, currentTurn) / CONTROLLER_RAMP;
       }
     }
+    // move!
+    ST->turn(currentTurn);
+    ST->drive(currentSpeed);
     if (!droidMoving)
     {
       droidMoving = true;

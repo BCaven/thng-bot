@@ -12,17 +12,17 @@ Tasks:
 [TODO] record/find audio
 [DONE] clean up manual driving
 [TODO] time how long it takes for the tft to refresh/draw shapes (specifically filling rectangles)
-[TODO] popup windows
-[TODO] custom event 1
+[STAL] popup windows
+[DONE] custom event 1
   [DONE] planning
-  [TODO] code
-  [TODO] hardware
+  [DONE] code
+  [DONE] hardware
 [TODO] custom event 2
   [TODO] planning
   [TODO] code
   [TODO] hardware
 [TODO] custom event 3
-  [TODO] planning
+  [DONE] planning
   [TODO] code
   [TODO] hardware
 [TODO] hidden feature: jukebox (space/time permitting)
@@ -31,11 +31,16 @@ Tasks:
 [TODO] remove unused variables
 [TODO] make sure all constants are #define
 [TODO] random() for making ambient routines more interesting
+[DONE] test gyroscope
+[TODO] implement gyroscope in custom routines
+[TODO] debug motor controller wiring
+[TODO] grab EVA sounds
+
 
 
 PLAN FOR PHYSICAL BUILD:
-  [TODO] design bones
-  [TODO] print bones
+  [DONE] design bones
+  [DONE] print bones
   [TODO] holes for LEDs
   [TODO] paths for wiring
 
@@ -53,6 +58,7 @@ PLAN FOR ROUTINE 1
 PLAN FOR ROUTINE 2
   the creature *doing something*
   "vibing"
+  there is no way this is happening
 
 PLAN FOR ROUTINE 3
   the creature dying
@@ -68,6 +74,7 @@ PLAN FOR ROUTINE 3
 PLAN FOR AMBIENT:
   Sound:
     look at movie for idle noises
+    grab EVA sounds
   Video:
     figure out where you are going to mount the tft board
 

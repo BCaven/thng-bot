@@ -125,11 +125,14 @@ servo motor:
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+#include <MPU6500_WE.h>
+#include <Wire.h>
 
 // ---------------------------------------------------------------------------------------
 //                 Servo setup
 // ---------------------------------------------------------------------------------------
-
+// servo PWM pin is 12
+#define SERVO_PIN 12
 Servo myServo;
 int servo_angle = 10; // where the servo is supposed to be
 int servo_max_angle = 170;
@@ -304,9 +307,9 @@ long track_lengths[10] = {
 #define MOSI 51
 #define SCK 52
 #define TCS 7
-#define RST 4
-#define TDC 5
 #define CARD_CS 6
+#define TDC 5
+#define RST 4
 Adafruit_ST7735 tft = Adafruit_ST7735(TCS, TDC, RST);
 
 /*
@@ -369,9 +372,15 @@ uhhhhhhhhh
 */
 #define AMBIENT_SOUND_REFRESH 2000
 long last_ambient_sound = 0;
-int FIRST_AMBIENT_TRACK = 0;
-int LAST_AMBIENT_TRACK = 10;
-
+int ambient_led_mode = 0;
+int ambient_video_mode = 0;
+int FIRST_AMBIENT_TRACK = 1;
+int LAST_AMBIENT_TRACK = 11;
+#define NUM_LED_AMBIENT_MODES 4
+#define NUM_TFT_AMBIENT_MODES 4
+int ambient_video_frame = 0;
+int num_video_refreshes = 0;
+#define MAX_VIDEO_REFRESHES 1000
 /*
 Custom sequences
 */
@@ -397,6 +406,16 @@ long custom_routine_refresh = 0;
 #define MAX_TWITCH 90
 #define MIN_TWITCH_TURN 40
 #define MAX_TWITCH_TURN 50
+
+// compass/gyroscope/accelerometer
+#define MPU6500_ADDR 0x68
+#define MAX_G 2;
+MPU6500_WE MPU6500_SENSOR = MPU6500_WE(MPU6500_ADDR);
+xyzFloat accel_value;
+xyzFloat gyro_value;
+float resultant_g = 0.0;
+
+
 
 
 // =======================================================================================
@@ -436,7 +455,12 @@ void setup()
 
   // tft board
   tft.initR(INITR_BLACKTAB);
+  Serial.print("tft rotation: ");
+  Serial.println(tft.getRotation());
+  tft.setRotation(2);
+
   testlines(ST77XX_BLUE);
+  tft.println("test text");
 
   // LED board
   LEDControl.begin();
@@ -464,6 +488,133 @@ void setup()
     LEDControl.setPWM(i, 0);
   }
   LEDControl.write();
+  
+  // servo
+  myServo.attach(SERVO_PIN);
+  myServo.write(0);
+  delay(1000);
+  myServo.write(360);
+  delay(1000);
+  myServo.write(90);
+
+
+  // gyroscope/accelerometer setup
+  Wire.begin();
+  if(!MPU6500_SENSOR.init()){
+    Serial.println("MPU6500 does not respond");
+  }
+  else{
+    Serial.println("MPU6500 is connected");
+  }
+  
+  /* The slope of the curve of acceleration vs measured values fits quite well to the theoretical 
+   * values, e.g. 16384 units/g in the +/- 2g range. But the starting point, if you position the 
+   * MPU6500 flat, is not necessarily 0g/0g/1g for x/y/z. The autoOffset function measures offset 
+   * values. It assumes your MPU6500 is positioned flat with its x,y-plane. The more you deviate 
+   * from this, the less accurate will be your results.
+   * The function also measures the offset of the gyroscope data. The gyroscope offset does not   
+   * depend on the positioning.
+   * This function needs to be called at the beginning since it can overwrite your settings!
+   */
+  Serial.println("Position you MPU6500 flat and don't move it - calibrating...");
+  delay(1000);
+  MPU6500_SENSOR.autoOffsets();
+  Serial.println("Done!");
+  
+  /*  This is a more accurate method for calibration. You have to determine the minimum and maximum 
+   *  raw acceleration values of the axes determined in the range +/- 2 g. 
+   *  You call the function as follows: setAccOffsets(xMin,xMax,yMin,yMax,zMin,zMax);
+   *  Use either autoOffset or setAccOffsets, not both.
+   */
+  //MPU6500_SENSOR.setAccOffsets(-14240.0, 18220.0, -17280.0, 15590.0, -20930.0, 12080.0);
+
+  /*  The gyroscope data is not zero, even if you don't move the MPU6500. 
+   *  To start at zero, you can apply offset values. These are the gyroscope raw values you obtain
+   *  using the +/- 250 degrees/s range. 
+   *  Use either autoOffset or setGyrOffsets, not both.
+   */
+  //MPU6500_SENSOR.setGyrOffsets(45.0, 145.0, -105.0);
+
+  /*  You can enable or disable the digital low pass filter (DLPF). If you disable the DLPF, you 
+   *  need to select the bandwdith, which can be either 8800 or 3600 Hz. 8800 Hz has a shorter delay,
+   *  but higher noise level. If DLPF is disabled, the output rate is 32 kHz.
+   *  MPU6500_BW_WO_DLPF_3600 
+   *  MPU6500_BW_WO_DLPF_8800
+   */
+  MPU6500_SENSOR.enableGyrDLPF();
+  //MPU6500_SENSOR.disableGyrDLPF(MPU6500_BW_WO_DLPF_8800); // bandwdith without DLPF
+  
+  /*  Digital Low Pass Filter for the gyroscope must be enabled to choose the level. 
+   *  MPU6500_DPLF_0, MPU6500_DPLF_2, ...... MPU6500_DPLF_7 
+   *  
+   *  DLPF    Bandwidth [Hz]   Delay [ms]   Output Rate [kHz]
+   *    0         250            0.97             8
+   *    1         184            2.9              1
+   *    2          92            3.9              1
+   *    3          41            5.9              1
+   *    4          20            9.9              1
+   *    5          10           17.85             1
+   *    6           5           33.48             1
+   *    7        3600            0.17             8
+   *    
+   *    You achieve lowest noise using level 6  
+   */
+  MPU6500_SENSOR.setGyrDLPF(MPU6500_DLPF_6);
+
+  /*  Sample rate divider divides the output rate of the gyroscope and accelerometer.
+   *  Sample rate = Internal sample rate / (1 + divider) 
+   *  It can only be applied if the corresponding DLPF is enabled and 0<DLPF<7!
+   *  Divider is a number 0...255
+   */
+  MPU6500_SENSOR.setSampleRateDivider(5);
+
+  /*  MPU6500_GYRO_RANGE_250       250 degrees per second (default)
+   *  MPU6500_GYRO_RANGE_500       500 degrees per second
+   *  MPU6500_GYRO_RANGE_1000     1000 degrees per second
+   *  MPU6500_GYRO_RANGE_2000     2000 degrees per second
+   */
+  MPU6500_SENSOR.setGyrRange(MPU6500_GYRO_RANGE_250);
+
+  /*  MPU6500_ACC_RANGE_2G      2 g   (default)
+   *  MPU6500_ACC_RANGE_4G      4 g
+   *  MPU6500_ACC_RANGE_8G      8 g   
+   *  MPU6500_ACC_RANGE_16G    16 g
+   */
+  MPU6500_SENSOR.setAccRange(MPU6500_ACC_RANGE_2G);
+
+  /*  Enable/disable the digital low pass filter for the accelerometer 
+   *  If disabled the bandwidth is 1.13 kHz, delay is 0.75 ms, output rate is 4 kHz
+   */
+  MPU6500_SENSOR.enableAccDLPF(true);
+
+  /*  Digital low pass filter (DLPF) for the accelerometer, if enabled 
+   *  MPU6500_DPLF_0, MPU6500_DPLF_2, ...... MPU6500_DPLF_7 
+   *   DLPF     Bandwidth [Hz]      Delay [ms]    Output rate [kHz]
+   *     0           460               1.94           1
+   *     1           184               5.80           1
+   *     2            92               7.80           1
+   *     3            41              11.80           1
+   *     4            20              19.80           1
+   *     5            10              35.70           1
+   *     6             5              66.96           1
+   *     7           460               1.94           1
+   */
+  MPU6500_SENSOR.setAccDLPF(MPU6500_DLPF_6);
+
+  /* You can enable or disable the axes for gyroscope and/or accelerometer measurements.
+   * By default all axes are enabled. Parameters are:  
+   * MPU6500_ENABLE_XYZ  //all axes are enabled (default)
+   * MPU6500_ENABLE_XY0  // X, Y enabled, Z disabled
+   * MPU6500_ENABLE_X0Z   
+   * MPU6500_ENABLE_X00
+   * MPU6500_ENABLE_0YZ
+   * MPU6500_ENABLE_0Y0
+   * MPU6500_ENABLE_00Z
+   * MPU6500_ENABLE_000  // all axes disabled
+   */
+  //MPU6500_SENSOR.enableAccAxes(MPU6500_ENABLE_XYZ);
+  //MPU6500_SENSOR.enableGyrAxes(MPU6500_ENABLE_XYZ);
+  delay(200);
 }
 
 /*
@@ -501,6 +652,14 @@ void loop()
       clear_screen = false;
     }
   }
+  if (control_mode == 2 && millis() % 20 == 0) {
+    // this needs to be here so the color remains up to date because otherwise it will be very slow
+    // if green turn left
+    // if red turn right
+    // if blue go straight
+    readColor();
+  }
+
   // If the PS3 controller has been connected - start processing the main controller routines
   if (PS3Controller->PS3Connected)
   {
@@ -556,6 +715,10 @@ void loop()
           mp3trigger.trigger(CELEBRATION);
           control_mode = 0;
         }
+      } else if (control_mode == 3) {
+        if (reqCross) {
+          control_mode = 0;
+        }
       }
     }
     // run tasks based on the mode we are in
@@ -579,9 +742,12 @@ void loop()
       }
     } else if (control_mode == 0)
     {
-      // TODO: make sure all of the frame counters are reset
+      // TODO: make sure all of the frame counters and modes are reset
       sequence_location = 0;
       num_dots = 0;
+      audio_mode = 1;
+      video_mode = 1;
+      led_mode = 3;
       if (millis() - last_control_mode_trigger > CONTROL_MODE_REFRESH) {
         last_control_mode_trigger = millis();
         if (currentTurn != 0 || currentSpeed != 0)
@@ -594,6 +760,8 @@ void loop()
         // TODO: decide if there is going to be a special idling thing
       }
     } else if (control_mode == 3) {
+      audio_mode = 3;
+      video_mode = 0;
       // custom routine 1
       if (millis() - last_control_mode_trigger > custom_routine_refresh) {
         last_control_mode_trigger = millis();
@@ -658,6 +826,17 @@ void loop()
     if (millis() - last_video_mode_refresh > VIDEO_MODE_REFRESH)
     {
       // video mode stuff
+      if (video_mode == 0) {
+        // do nothing
+      } else if (video_mode == 1) {
+        // ambient
+        ambient_video();
+        num_video_refreshes += 1;
+        if (num_video_refreshes > MAX_VIDEO_REFRESHES) {
+          ambient_video_mode = random(0, NUM_TFT_AMBIENT_MODES);
+          num_video_refreshes = 0;
+        }
+      }
     }
 
     if (millis() - last_led_mode_refresh > LED_MODE_REFRESH) {
@@ -671,6 +850,9 @@ void loop()
         // TMP turn off and go to mode 0
         led_all_off();
         led_mode = 0;
+      } else if (led_mode == 3) {
+        // ambient LED
+        ambient_led();
       }
     }
 
@@ -716,6 +898,24 @@ void loop()
 // =======================================================================================
 //      ADD YOUR CUSTOM DROID FUNCTIONS STARTING HERE
 // =======================================================================================
+/*
+Gyroscope/accelerometer functions
+
+This is one of the ambient routines that runs occasionally
+*/
+void update_MPU6500() {
+  accel_value = MPU6500_SENSOR.getGValues();
+  gyro_value = MPU6500_SENSOR.getGyrValues();
+  resultant_g = MPU6500_SENSOR.getResultantG(accel_value);
+}
+
+void too_much_acceleration() {
+  /*
+  warning, passing maximum safe acceleration value
+  */
+}
+
+
 /*
 Routine 1:
 the thing comes to life
@@ -939,7 +1139,22 @@ the thing tries to eat you
 
 */
 void custom_routine_2() {
-
+  if (sequence_location == 1) {
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.setTextSize(1);
+    tft.println("Searching");
+    // om nom    
+    custom_routine_sound_track = 1; // TODO: change this
+    custom_rotuine_start_new_sound = true;
+    go_to_next_sequence_location = true;
+  } else if (sequence_location == 2) {
+    // found something to nom on
+  } else if (sequence_location == 3) {
+    // nomming
+  } else if (sequence_location == 4) {
+    // full
+  }
 
 }
 
@@ -949,25 +1164,21 @@ the thing dies a fiery death
 
 */
 void custom_routine_3() {
+  if (sequence_location == 1) {
+    tft.setCursor(0, 0);
+    tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    tft.setTextSize(1);
+    tft.println("Searching");
+  } else if (sequence_location == 2) {
 
+  }
 }
 
 /*
 TFT board
 
 */
-void popupWindow(String text) {
-  /*
-  Ideas for the popup window: just clear a portion of the screen
 
-  Problems:
-  if this happens during an animation the screen would get cleared anyways
-
-  
-
-
-  */
-}
 void testlines(uint16_t color)
 {
   tft.fillScreen(ST77XX_BLACK);
@@ -1055,6 +1266,83 @@ void ambient_sound()
     // TODO: might not want to track ambient sounds so you can interupt them
     last_audio_trigger = millis(); 
     last_ambient_sound = millis();
+  }
+}
+void ambient_led() {
+  // maybe three different combos
+  if (ambient_led_mode == 0) {
+    // off
+    for (int i = 0; i < NUM_LEDS; i++) {
+      LEDControl.setPWM(i, 0);
+    }
+  } else if (ambient_led_mode == 1) {
+    // random
+    int led = random(0, NUM_LEDS);
+    if (LEDControl.getPWM(led) > 0) {
+      LEDControl.setPWM(led, 0);
+    } else {
+      LEDControl.setPWM(led, LED_MAX_BRIGHT);
+    }
+  } else if (ambient_led_mode == 2) {
+    // pick some on some off
+    for (int i = 0; i < NUM_LEDS/2; i++) {
+      LEDControl.setPWM(i, LED_MAX_BRIGHT);
+    }
+    for (int i = NUM_LEDS/2; i < NUM_LEDS; i++) {
+      LEDControl.setPWM(i, 0);
+    }
+  } else if (ambient_led_mode == 3) {
+    // switch on and off
+    for (int i = 0; i < NUM_LEDS; i++) {
+      if (LEDControl.getPWM(i) > 0) {
+        LEDControl.setPWM(i, 0);
+      } else {
+        LEDControl.setPWM(i, LED_MAX_BRIGHT);
+      }
+    }
+  }
+  // get a new ambient mode
+  ambient_led_mode = random(0, NUM_LED_AMBIENT_MODES);
+
+}
+void ambient_video() {
+  // idk how many of these I will have time to cook up
+  if (ambient_video_mode == 0) {
+    // warning text
+    // flip flop to get the blinking
+    if (ambient_video_frame < 5) {
+      tft.setCursor(10, 10);
+      tft.setTextSize(2);
+      tft.setTextColor(ST7735_BLUE);
+      tft.println("WARNING");
+      ambient_video_frame += 1;
+    } else {
+      ambient_video_frame = 0;
+      tft.setCursor(13, 13);
+      tft.setTextColor(ST7735_CYAN);
+      tft.setTextSize(2);
+      tft.println("WARNING");
+    }
+  } else if (ambient_video_mode == 1) {
+    // "static"
+    int x1 = random(0, tft.width());
+    int y1 = random(0, tft.height());
+    tft.drawPixel(x1, y1, ST7735_GREEN);
+    int x2 = random(0, tft.width());
+    int y2 = random(0, tft.height());
+    tft.drawPixel(x1, y1, ST7735_RED);
+  } else if (ambient_video_mode == 2) {
+    // lines drawing across
+    if (ambient_video_frame < tft.height()) {
+      if (ambient_video_frame > 1) {
+        tft.drawFastHLine(0, ambient_video_frame - 2, tft.width(), ST7735_BLUE);  
+      }
+      tft.drawFastHLine(0, ambient_video_frame, tft.width(), ST7735_RED);
+      ambient_video_frame += 1;
+    } else {
+      ambient_video_frame = 0;
+      tft.fillScreen(ST7735_BLACK);
+    }
   }
 }
 void custom_routine_sound() {
@@ -1336,11 +1624,7 @@ void readColor()
 */
 void autonomousDriving()
 {
-  // if STOP: return
-  // if green turn left
-  // if red turn right
-  // if blue go straight
-  readColor();
+  
   // going to need to do a check for "real" color or we can just set the current color to invalid (-1)
   if (currentColor != -1)
   {

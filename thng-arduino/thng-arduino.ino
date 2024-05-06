@@ -390,6 +390,9 @@ Custom sequences
 // control for which part of the sequence we are on
 int sequence_location = 1;
 #define SEQUENCE_1_NUM_LOCATIONS 19
+#define SEQUENCE_2_NUM_LOCATIONS 4
+#define SEQUENCE_3_NUM_LOCATIONS 2
+
 bool go_to_next_sequence_location = false;
 // loading dots when booting (...)
 long boot_dot_refresh = 1000;
@@ -400,7 +403,8 @@ int custom_routine_sound_track = 0;
 bool custom_rotuine_start_new_sound = false;
 long custom_routine_refresh = 0;
 // corruption animation
-
+#define CORRUPTION_FRAMES 120
+long corruption_frame = 0;
 // twitching motors
 #define MIN_TWITCH 70
 #define MAX_TWITCH 90
@@ -686,10 +690,12 @@ void loop()
           control_mode = 3;
         }
         if (reqArrowUp) {
-          // go up one routine
+          // ambient 2
+          control_mode = 4;
         }
         if (reqArrowDown) {
-          // go down one routine
+          // ambient 3
+          control_mode = 5;
         }
       }
       else if (control_mode == 1)
@@ -715,9 +721,11 @@ void loop()
           mp3trigger.trigger(CELEBRATION);
           control_mode = 0;
         }
-      } else if (control_mode == 3) {
+      } else if (control_mode > 2) {
+        // all ambient modes
         if (reqCross) {
           control_mode = 0;
+          ST->stop();
         }
       }
     }
@@ -781,6 +789,50 @@ void loop()
         }
 
       }
+    } else if (control_mode == 4) {
+      audio_mode = 3;
+      video_mode = 0;
+      // custom routine 1
+      if (millis() - last_control_mode_trigger > custom_routine_refresh) {
+        last_control_mode_trigger = millis();
+        // make the custom_routine_refresh random
+        custom_routine_refresh = random(CUSTOM_ROUTINE_MIN, CUSTOM_ROUTINE_MAX); // TODO: make this random
+        custom_routine_2();
+        if (go_to_next_sequence_location) {
+          go_to_next_sequence_location = false;
+          sequence_location += 1;
+          Serial.print("sequence location: ");
+          Serial.println(sequence_location);
+        }
+        if (sequence_location > SEQUENCE_2_NUM_LOCATIONS) {
+          // go back to the normal mode
+          control_mode = 0;
+          Serial.println("going back to the normal mode");
+        }
+
+      }
+    } else if (control_mode == 5) {
+      audio_mode = 3;
+      video_mode = 0;
+      // custom routine 1
+      if (millis() - last_control_mode_trigger > custom_routine_refresh) {
+        last_control_mode_trigger = millis();
+        // make the custom_routine_refresh random
+        custom_routine_refresh = random(CUSTOM_ROUTINE_MIN, CUSTOM_ROUTINE_MAX); // TODO: make this random
+        custom_routine_3();
+        if (go_to_next_sequence_location) {
+          go_to_next_sequence_location = false;
+          sequence_location += 1;
+          Serial.print("sequence location: ");
+          Serial.println(sequence_location);
+        }
+        if (sequence_location > SEQUENCE_3_NUM_LOCATIONS) {
+          // go back to the normal mode
+          control_mode = 0;
+          Serial.println("going back to the normal mode");
+        }
+
+      }
     }
     
     if (millis() - last_motor_mode_refresh > MOTOR_MODE_REFRESH) {
@@ -792,6 +844,7 @@ void loop()
         motor_twitch();
       } else if (motor_mode == 2) {
         // something else
+        motor_circle();
       } else if (motor_mode == 3) {
         // a third thing ig
       } else {
@@ -939,11 +992,13 @@ void custom_routine_1() {
     tft.println("Beginning boot sequence...");
     // TODO: sound "booting..."
     
-    custom_routine_sound_track = 1;
+    custom_routine_sound_track = 12;
     custom_rotuine_start_new_sound = true;
     go_to_next_sequence_location = true;
   } else if (sequence_location == 2) {
     tft.print("Checking peripherals");
+    custom_routine_sound_track = 13;
+    custom_rotuine_start_new_sound = true;
     go_to_next_sequence_location = true;
   } else if (sequence_location == 3) {
     boot_dots();
@@ -954,6 +1009,9 @@ void custom_routine_1() {
     go_to_next_sequence_location = true;
   } else if (sequence_location == 5) {
     tft.println("importing external libraries:");
+    custom_routine_sound_track = 16;
+    custom_rotuine_start_new_sound = true;
+    
     go_to_next_sequence_location = true;
   } else if (sequence_location == 6) {
     tft.println("motor control - IMPORTED");
@@ -988,7 +1046,9 @@ void custom_routine_1() {
     tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
     led_mode = 1;
     // sound "FAILED"
-
+    custom_routine_sound_track = 17;
+    custom_rotuine_start_new_sound = true;
+    
     go_to_next_sequence_location = true;
   } else if (sequence_location == 14) {
     // attempting import a second time
@@ -1019,7 +1079,7 @@ void custom_routine_1() {
     tft.setTextColor(ST7735_WHITE, ST7735_BLACK);
     tft.println("EXITING");
     // and then it dips
-    custom_routine_sound_track = 2;
+    custom_routine_sound_track = 23;
     custom_rotuine_start_new_sound = true;
     
     // sound "CRITICAL ERROR ENCOUNTERED"
@@ -1108,6 +1168,7 @@ void corruption_complete() {
   maybe hook up some vibrational motors to the panels so the panels shake
 
   */
+ 
 }
 void motor_twitch() {
   int invert_twitch = MAX_TWITCH * -1;
@@ -1139,23 +1200,32 @@ the thing tries to eat you
 
 */
 void custom_routine_2() {
+  audio_mode = 3;
   if (sequence_location == 1) {
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     tft.setTextSize(1);
-    tft.println("Searching");
+    tft.println("Attempting shutdown");
     // om nom    
     custom_routine_sound_track = 1; // TODO: change this
     custom_rotuine_start_new_sound = true;
     go_to_next_sequence_location = true;
   } else if (sequence_location == 2) {
-    // found something to nom on
+    boot_dots();
   } else if (sequence_location == 3) {
-    // nomming
+    corruption_complete();
+    motor_mode = 2;
   } else if (sequence_location == 4) {
-    // full
+    motor_mode = 0;
+
   }
 
+}
+void motor_circle() {
+  currentSpeed = -50;
+  currentTurn = 40;
+  ST->drive(currentSpeed);
+  ST->turn(currentTurn);
 }
 
 /*
@@ -1164,13 +1234,14 @@ the thing dies a fiery death
 
 */
 void custom_routine_3() {
+  audio_mode = 3;
   if (sequence_location == 1) {
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    tft.setTextSize(1);
-    tft.println("Searching");
+    tft.setTextSize(3);
+    tft.println("ded");
   } else if (sequence_location == 2) {
-
+    tft.println("big sad");
   }
 }
 
